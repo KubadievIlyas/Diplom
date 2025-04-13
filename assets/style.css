@@ -1,0 +1,58 @@
+/* Основной фон */
+QWidget {
+    background-color: #F2ECE7;
+    font-family: Segoe UI, sans-serif;
+    font-size: 14px;
+    color: #3C2C23;
+}
+
+/* Кнопки */
+QPushButton {
+    background-color: #C08A5D;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: none;
+}
+QPushButton:hover {
+    background-color: #814D36;
+}
+
+/* Таблицы */
+QTableWidget {
+    background-color: #FFFFFF;
+    gridline-color: #B8A9A1;
+    border: 1px solid #B8A9A1;
+}
+QHeaderView::section {
+    background-color: #EBD3A5;
+    color: #3C2C23;
+    font-weight: bold;
+    padding: 4px;
+    border: none;
+}
+
+/* Ввод текста */
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #B8A9A1;
+    padding: 4px;
+    border-radius: 4px;
+}
+
+/* Tabs */
+QTabWidget::pane {
+    border: 1px solid #B8A9A1;
+    background: #F2ECE7;
+}
+QTabBar::tab {
+    background: #EBD3A5;
+    padding: 6px 10px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    color: #3C2C23;
+}
+QTabBar::tab:selected {
+    background: #C08A5D;
+    color: white;
+}
