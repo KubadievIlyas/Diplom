@@ -3,9 +3,9 @@ from PyQt6.QtWidgets import (
     QPushButton, QMessageBox, QHBoxLayout, QProgressBar, QScrollArea, QGroupBox, QDialog, QFormLayout
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
-from database.db import Database
 from decimal import Decimal
+from database.db import Database
+
 
 class CalculatorTab(QWidget):
     def __init__(self):
@@ -32,9 +32,11 @@ class CalculatorTab(QWidget):
         calculate_btn = QPushButton("Рассчитать прибыль")
         calculate_btn.clicked.connect(self.calculate_profit)
 
-        # Кнопка для изменения цены
         change_price_btn = QPushButton("Изменить цену")
         change_price_btn.clicked.connect(self.change_price)
+
+        refresh_products_btn = QPushButton("Обновить список товаров")
+        refresh_products_btn.clicked.connect(self.load_products)
 
         left_layout.addWidget(QLabel("Выберите товар"))
         left_layout.addWidget(self.product_select)
@@ -48,16 +50,12 @@ class CalculatorTab(QWidget):
         left_layout.addWidget(QLabel("Результаты:"))
         left_layout.addWidget(self.result_label)
         left_layout.addWidget(self.profit_bar)
-        left_layout.addWidget(change_price_btn)  # Добавили кнопку изменения цены
+        left_layout.addWidget(change_price_btn)
+        left_layout.addWidget(refresh_products_btn)
 
         # Правая часть с информацией
         info_layout = QVBoxLayout()
-
-        # Информационное окно
-        info_group_box = QGroupBox()
-        info_group_box.setTitle("Как работают расчёты")
-
-        # Применим стиль к заголовку
+        info_group_box = QGroupBox("Как работают расчёты")
         info_group_box.setStyleSheet("""
             QGroupBox {
                 font-size: 18px;
@@ -74,18 +72,14 @@ class CalculatorTab(QWidget):
             - Себестоимость товара<br>
             - Прочие расходы на единицу товара<br>
             - Фиксированные расходы (банковская комиссия, налог)<br><br>
-
             <b>Не учитываются:</b><br>
             - Аренда<br>
             - Зарплата сотрудников<br>
             - Коммунальные услуги<br><br>
-
             <b>Рассчитываемая прибыль отображает только чистую прибыль с учётом данных факторов.</b>
             """
         )
-        info_text.setWordWrap(True)  # Перенос текста
-
-        # Применим стиль для текста
+        info_text.setWordWrap(True)
         info_text.setStyleSheet("""
             QLabel {
                 background-color: #EBD3A5;
@@ -106,21 +100,19 @@ class CalculatorTab(QWidget):
         info_group_box.setLayout(QVBoxLayout())
         info_group_box.layout().addWidget(info_text)
 
-        # Увеличиваем пространство для информационного окна
         info_scroll_area = QScrollArea()
         info_scroll_area.setWidgetResizable(True)
         info_widget = QWidget()
         info_widget.setLayout(info_layout)
         info_scroll_area.setWidget(info_widget)
 
-        # Добавляем правую панель с информацией
         layout.addLayout(left_layout, 3)
-        layout.addWidget(info_scroll_area, 2)  # Увеличили размер правой панели
+        layout.addWidget(info_scroll_area, 2)
 
-        # Применение стилей из файла CSS
         self.apply_styles()
 
     def load_products(self):
+        self.product_select.clear()
         products = self.db.fetch_all("SELECT id, name, price FROM products")
         self.products = {f"{p['name']} ({p['price']} ₽)": (p['id'], p['price']) for p in products}
         self.product_select.addItems(self.products.keys())
@@ -134,7 +126,6 @@ class CalculatorTab(QWidget):
 
     def calculate_profit(self):
         try:
-            # Получаем выбранный продукт
             current_item = self.product_select.currentText()
             product_id, _ = self.products.get(current_item, (None, None))
 
@@ -142,7 +133,7 @@ class CalculatorTab(QWidget):
                 QMessageBox.warning(self, "Ошибка", "Выберите продукт.")
                 return
 
-            # Чтение введённых данных с приведением к Decimal
+            # Ввод пользователя
             cost_price = Decimal(self.cost_input.text().replace(',', '.'))
             other_expenses = Decimal(self.other_expenses_input.text().replace(',', '.'))
             quantity = int(self.monthly_output_input.text())
@@ -151,7 +142,7 @@ class CalculatorTab(QWidget):
                 QMessageBox.warning(self, "Ошибка", "Количество должно быть больше нуля.")
                 return
 
-            # Получаем цену продажи
+            # Получаем актуальную цену из базы (учитывает даже свежие изменения)
             product = self.db.fetch_one("SELECT price FROM products WHERE id = %s", (product_id,))
             if not product:
                 QMessageBox.critical(self, "Ошибка", "Продукт не найден в базе.")
@@ -159,35 +150,36 @@ class CalculatorTab(QWidget):
 
             price = Decimal(product["price"])
 
-            # Получаем фиксированные расходы
+            # Получаем фиксированные издержки (проценты)
             fixed = self.db.fetch_one("SELECT * FROM fixed_costs WHERE id = 1")
-
             if not fixed:
                 QMessageBox.critical(self, "Ошибка", "Фиксированные издержки не заданы.")
                 return
 
-            bank_fee = Decimal(fixed["bank_fee"])  # Преобразуем в Decimal
-            tax = Decimal(fixed["nalog"])  # Преобразуем в Decimal
+            bank_fee_percent = Decimal(fixed["bank_fee"])
+            tax_percent = Decimal(fixed["nalog"])
 
             # Расчёты
-            total_fixed = (price * quantity) * (bank_fee + tax)
-            full_cost = (cost_price + other_expenses) * quantity + total_fixed
-            revenue = price * quantity
-            net_profit = revenue - full_cost
+            revenue = price * quantity  # Общая выручка
+            total_variable_cost = (cost_price + other_expenses) * quantity  # Переменные расходы
+            total_fixed_cost = revenue * (bank_fee_percent + tax_percent)  # Комиссия + налог
+            total_cost = total_variable_cost + total_fixed_cost
 
-            if revenue == 0:
-                profit_percent = 0
-            else:
-                profit_percent = (net_profit / revenue) * 100
+            net_profit = revenue - total_cost  # Чистая прибыль
+            profit_percent = (net_profit / revenue) * 100 if revenue > 0 else 0
 
-            # Вывод результатов
-            self.result_label.setText(f"Прибыль: {net_profit:.2f} ₽ ({profit_percent:.1f}%)")
+            # Отображение
+            self.result_label.setText(
+                f"Цена: {price:.2f} ₽ | Себестоимость + расходы: {(cost_price + other_expenses):.2f} ₽\n"
+                f"Выручка: {revenue:.2f} ₽\n"
+                f"Итоговая прибыль: {net_profit:.2f} ₽ ({profit_percent:.1f}%)"
+            )
             self.update_progress_bar(profit_percent)
 
         except ValueError:
             QMessageBox.warning(self, "Ошибка", "Проверьте корректность введённых чисел.")
         except Exception as e:
-            QMessageBox.critical(self, "Критическая ошибка", f"{str(e)}")
+            QMessageBox.critical(self, "Критическая ошибка", str(e))
 
     def update_progress_bar(self, percent):
         self.profit_bar.setValue(int(percent))
@@ -202,7 +194,6 @@ class CalculatorTab(QWidget):
             self.profit_bar.setFormat("Высокая прибыль (%p%)")
 
     def change_price(self):
-        # Получаем выбранный продукт
         current_item = self.product_select.currentText()
         product_id, _ = self.products.get(current_item, (None, None))
 
@@ -210,12 +201,10 @@ class CalculatorTab(QWidget):
             QMessageBox.warning(self, "Ошибка", "Выберите продукт.")
             return
 
-        # Открываем диалог для изменения цены
         dialog = ChangePriceDialog(product_id, self.db)
         dialog.exec()
-
-        # После изменения цены, обновляем данные
         self.load_products()
+
 
 class ChangePriceDialog(QDialog):
     def __init__(self, product_id, db):
@@ -246,10 +235,7 @@ class ChangePriceDialog(QDialog):
                 QMessageBox.warning(self, "Ошибка", "Цена должна быть больше нуля.")
                 return
 
-            # Обновляем цену в базе данных
             self.db.execute("UPDATE products SET price = %s WHERE id = %s", (new_price, self.product_id))
-
-            # Закрываем диалог
             QMessageBox.information(self, "Успех", "Цена успешно обновлена.")
             self.accept()
         except ValueError:

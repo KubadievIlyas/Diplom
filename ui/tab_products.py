@@ -64,6 +64,7 @@ class ProductTab(QWidget):
         self.product_container = QWidget()
         self.grid = QGridLayout(self.product_container)
         self.grid.setSpacing(20)
+        self.grid.setAlignment(Qt.AlignmentFlag.AlignTop)  # 🧷 добавь эту строку
         self.product_area.setWidget(self.product_container)
 
         main_layout.addWidget(self.product_area, 4)
