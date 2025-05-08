@@ -5,13 +5,11 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QDate, QTime
 from database.db import Database
-from datetime import timedelta, time
-import tempfile
-import subprocess
+from datetime import timedelta, time, datetime
+import tempfile, os, subprocess
 from openpyxl import Workbook
 from openpyxl.styles import Font
-import os
-from datetime import datetime
+
 
 def to_qtime(value):
     if isinstance(value, QTime):
@@ -106,14 +104,6 @@ class EditShiftDialog(QDialog):
         return start.secsTo(end) / 3600
 
 
-import os
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QCalendarWidget, QTextBrowser,
-    QPushButton, QFileDialog, QMessageBox
-)
-from openpyxl import Workbook
-
-
 class SummaryDialog(QDialog):
     def __init__(self, parent=None, db=None, employees=None):
         super().__init__(parent)
@@ -140,8 +130,8 @@ class SummaryDialog(QDialog):
         layout.addWidget(QLabel("Конечная дата:"))
         layout.addWidget(self.end_date_edit)
         layout.addWidget(self.show_button)
-        layout.addWidget(self.result_browser)
         layout.addWidget(self.export_button)
+        layout.addWidget(self.result_browser)
         layout.addWidget(self.close_button)
         self.setLayout(layout)
 
@@ -149,7 +139,7 @@ class SummaryDialog(QDialog):
         start_date = self.start_date_edit.selectedDate().toString("yyyy-MM-dd")
         end_date = self.end_date_edit.selectedDate().toString("yyyy-MM-dd")
 
-        self.summary_data = self.db.fetch_all("""
+        result = self.db.fetch_all("""
             SELECT e.first_name, e.last_name, SUM(s.shift_salary) as total_salary, COUNT(*) as shift_count
             FROM shifts s
             JOIN employees e ON s.employee_id = e.id
@@ -158,14 +148,15 @@ class SummaryDialog(QDialog):
             ORDER BY total_salary DESC
         """, (start_date, end_date))
 
+        self.summary_data = result
         self.result_browser.clear()
         self.result_browser.append(f"Сводка с {start_date} по {end_date}:\n")
 
-        if not self.summary_data:
+        if not result:
             self.result_browser.append("Нет данных за выбранный период.")
             return
 
-        for row in self.summary_data:
+        for row in result:
             full_name = f"{row['first_name']} {row['last_name']}"
             self.result_browser.append(
                 f"👤 {full_name} — 💰 {row['total_salary']:.2f} ₽ ({row['shift_count']} смен)"
@@ -390,10 +381,13 @@ class EmployeeTab(QWidget):
         self.load_shifts()
 
     def open_manage_shifts(self):
-        from manage_shifts_dialog import ManageShiftsDialog  # Импорт при необходимости
-        dialog = ManageShiftsDialog(self, db=self.db, employees=self.employees_data)
-        if dialog.exec():
-            self.load_shifts()
+        try:
+            from ui.manage_shifts_dialog import ManageShiftsDialog
+            dialog = ManageShiftsDialog(self, db=self.db, employees=self.employees_data)
+            if dialog.exec():
+                self.load_shifts()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть управление сменами:\n{e}")
 
     def open_summary(self):
         dialog = SummaryDialog(self, db=self.db, employees=self.employees_data)
