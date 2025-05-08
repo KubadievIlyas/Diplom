@@ -8,7 +8,8 @@ from ui.tab_products import ProductTab
 from ui.tab_calculator import CalculatorTab
 from ui.tab_employees import EmployeeTab
 from ui.tab_settings import SettingsTab
-
+from PIL import Image
+import os
 
 class MainWindow(QMainWindow):
     def __init__(self):
