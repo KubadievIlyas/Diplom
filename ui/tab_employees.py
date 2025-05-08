@@ -9,6 +9,7 @@ from datetime import timedelta, time, datetime
 import tempfile, os, subprocess
 from openpyxl import Workbook
 from openpyxl.styles import Font
+import platform
 
 
 def to_qtime(value):
@@ -218,12 +219,15 @@ class SummaryDialog(QDialog):
             temp_path = os.path.join(tempfile.gettempdir(), f"Сводка_{timestamp}.xlsx")
             wb.save(temp_path)
 
-            if os.name == "nt":
+            system = platform.system()
+            if system == "Windows":
                 os.startfile(temp_path)
-            elif os.name == "posix":
-                subprocess.call(["xdg-open", temp_path])
-            elif os.name == "mac":
+            elif system == "Darwin":  # macOS
                 subprocess.call(["open", temp_path])
+            elif system == "Linux":
+                subprocess.call(["xdg-open", temp_path])
+            else:
+                QMessageBox.information(self, "Инфо", f"Файл сохранён: {temp_path}\nОткройте его вручную.")
 
             QMessageBox.information(self, "Готово", f"Файл экспортирован: {temp_path}")
 
