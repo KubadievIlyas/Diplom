@@ -222,7 +222,7 @@ class SummaryDialog(QDialog):
             system = platform.system()
             if system == "Windows":
                 os.startfile(temp_path)
-            elif system == "Darwin":  # macOS
+            elif system == "Darwin":  # macO
                 subprocess.call(["open", temp_path])
             elif system == "Linux":
                 subprocess.call(["xdg-open", temp_path])
