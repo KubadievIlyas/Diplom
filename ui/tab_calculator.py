@@ -6,6 +6,8 @@ from PyQt6.QtCore import Qt
 from decimal import Decimal
 from database.db import Database
 
+# Импортируем для доступа к фиксированным расходам
+from ui.tab_settings import SettingsTab  # корректный путь
 
 class CalculatorTab(QWidget):
     def __init__(self):
@@ -16,7 +18,7 @@ class CalculatorTab(QWidget):
     def init_ui(self):
         layout = QHBoxLayout(self)
 
-        # Левая часть с калькулятором
+        # Левая часть
         left_layout = QVBoxLayout()
         self.product_select = QComboBox()
         self.load_products()
@@ -53,7 +55,20 @@ class CalculatorTab(QWidget):
         left_layout.addWidget(change_price_btn)
         left_layout.addWidget(refresh_products_btn)
 
-        # Правая часть с информацией
+        # Фиксированные расходы
+        self.bank_fee_input = QLineEdit()
+        self.nalog_input = QLineEdit()
+
+        left_layout.addWidget(QLabel("Банковская комиссия (%)"))
+        left_layout.addWidget(self.bank_fee_input)
+        left_layout.addWidget(QLabel("Налог (%)"))
+        left_layout.addWidget(self.nalog_input)
+
+        save_fixed_btn = QPushButton("Сохранить комиссии и налоги")
+        save_fixed_btn.clicked.connect(self.save_fixed_costs)
+        left_layout.addWidget(save_fixed_btn)
+
+        # Правая часть — справка
         info_layout = QVBoxLayout()
         info_group_box = QGroupBox("Как работают расчёты")
         info_group_box.setStyleSheet("""
@@ -61,54 +76,35 @@ class CalculatorTab(QWidget):
                 font-size: 18px;
                 font-weight: bold;
                 color: #3C2C23;
-                text-align: center;
             }
         """)
 
-        info_text = QLabel(
-            """
-            <b>В расчётах учитываются следующие данные:</b><br>
-            - Цена продажи товара<br>
-            - Себестоимость товара<br>
-            - Прочие расходы на единицу товара<br>
-            - Фиксированные расходы (банковская комиссия, налог)<br><br>
+        info_text = QLabel("""
+            <b>Учитываются:</b><br>
+            - Цена продажи<br>
+            - Себестоимость<br>
+            - Прочие расходы<br>
+            - Банковская комиссия и налог<br><br>
             <b>Не учитываются:</b><br>
             - Аренда<br>
-            - Зарплата сотрудников<br>
-            - Коммунальные услуги<br><br>
-            <b>Рассчитываемая прибыль отображает только чистую прибыль с учётом данных факторов.</b>
-            """
-        )
+            - Зарплаты<br>
+            - Коммунальные услуги<br>
+            """)
         info_text.setWordWrap(True)
-        info_text.setStyleSheet("""
-            QLabel {
-                background-color: #EBD3A5;
-                padding: 15px;
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 16px;
-                color: #3C2C23;
-                border-radius: 8px;
-                border: 2px solid #C08A5D;
-            }
-            QLabel b {
-                font-weight: bold;
-                color: #C08A5D;
-            }
-        """)
-
-        info_layout.addWidget(info_group_box)
         info_group_box.setLayout(QVBoxLayout())
         info_group_box.layout().addWidget(info_text)
+        info_layout.addWidget(info_group_box)
 
-        info_scroll_area = QScrollArea()
-        info_scroll_area.setWidgetResizable(True)
+        info_scroll = QScrollArea()
+        info_scroll.setWidgetResizable(True)
         info_widget = QWidget()
         info_widget.setLayout(info_layout)
-        info_scroll_area.setWidget(info_widget)
+        info_scroll.setWidget(info_widget)
 
         layout.addLayout(left_layout, 3)
-        layout.addWidget(info_scroll_area, 2)
+        layout.addWidget(info_scroll, 2)
 
+        self.load_fixed_costs()
         self.apply_styles()
 
     def load_products(self):
@@ -122,18 +118,42 @@ class CalculatorTab(QWidget):
             with open("assets/style.css", "r", encoding="utf-8") as f:
                 self.setStyleSheet(f.read())
         except FileNotFoundError:
-            print("⚠️ Файл стилей не найден: assets/style.css")
+            print("⚠️ Файл стилей не найден")
+
+    def load_fixed_costs(self):
+        fixed = self.db.fetch_one("SELECT * FROM fixed_costs WHERE id = 1")
+        if fixed:
+            self.bank_fee_input.setText(str(fixed["bank_fee"] * 100))
+            self.nalog_input.setText(str(fixed["nalog"] * 100))
+        else:
+            QMessageBox.warning(self, "Ошибка", "Не удалось загрузить фиксированные издержки.")
+
+    def save_fixed_costs(self):
+        try:
+            bank_fee_percent = Decimal(self.bank_fee_input.text().replace(',', '.')) / 100
+            nalog_percent = Decimal(self.nalog_input.text().replace(',', '.')) / 100
+
+            if bank_fee_percent < 0 or nalog_percent < 0:
+                QMessageBox.warning(self, "Ошибка", "Значения не могут быть отрицательными.")
+                return
+
+            self.db.execute(
+                "UPDATE fixed_costs SET bank_fee = %s, nalog = %s WHERE id = 1",
+                (bank_fee_percent, nalog_percent)
+            )
+
+            QMessageBox.information(self, "Успех", "Фиксированные издержки обновлены.")
+        except ValueError:
+            QMessageBox.warning(self, "Ошибка", "Введите корректные значения.")
 
     def calculate_profit(self):
         try:
             current_item = self.product_select.currentText()
             product_id, _ = self.products.get(current_item, (None, None))
-
             if not product_id:
                 QMessageBox.warning(self, "Ошибка", "Выберите продукт.")
                 return
 
-            # Ввод пользователя
             cost_price = Decimal(self.cost_input.text().replace(',', '.'))
             other_expenses = Decimal(self.other_expenses_input.text().replace(',', '.'))
             quantity = int(self.monthly_output_input.text())
@@ -142,33 +162,24 @@ class CalculatorTab(QWidget):
                 QMessageBox.warning(self, "Ошибка", "Количество должно быть больше нуля.")
                 return
 
-            # Получаем актуальную цену из базы (учитывает даже свежие изменения)
             product = self.db.fetch_one("SELECT price FROM products WHERE id = %s", (product_id,))
             if not product:
-                QMessageBox.critical(self, "Ошибка", "Продукт не найден в базе.")
+                QMessageBox.critical(self, "Ошибка", "Продукт не найден.")
                 return
 
             price = Decimal(product["price"])
 
-            # Получаем фиксированные издержки (проценты)
-            fixed = self.db.fetch_one("SELECT * FROM fixed_costs WHERE id = 1")
-            if not fixed:
-                QMessageBox.critical(self, "Ошибка", "Фиксированные издержки не заданы.")
-                return
+            bank_fee = Decimal(self.bank_fee_input.text().replace(',', '.')) / 100
+            nalog = Decimal(self.nalog_input.text().replace(',', '.')) / 100
 
-            bank_fee_percent = Decimal(fixed["bank_fee"])
-            tax_percent = Decimal(fixed["nalog"])
-
-            # Расчёты
-            revenue = price * quantity  # Общая выручка
-            total_variable_cost = (cost_price + other_expenses) * quantity  # Переменные расходы
-            total_fixed_cost = revenue * (bank_fee_percent + tax_percent)  # Комиссия + налог
+            revenue = price * quantity
+            total_variable_cost = (cost_price + other_expenses) * quantity
+            total_fixed_cost = revenue * (bank_fee + nalog)
             total_cost = total_variable_cost + total_fixed_cost
 
-            net_profit = revenue - total_cost  # Чистая прибыль
+            net_profit = revenue - total_cost
             profit_percent = (net_profit / revenue) * 100 if revenue > 0 else 0
 
-            # Отображение
             self.result_label.setText(
                 f"Цена: {price:.2f} ₽ | Себестоимость + расходы: {(cost_price + other_expenses):.2f} ₽\n"
                 f"Выручка: {revenue:.2f} ₽\n"
@@ -177,9 +188,9 @@ class CalculatorTab(QWidget):
             self.update_progress_bar(profit_percent)
 
         except ValueError:
-            QMessageBox.warning(self, "Ошибка", "Проверьте корректность введённых чисел.")
+            QMessageBox.warning(self, "Ошибка", "Введите корректные числовые значения.")
         except Exception as e:
-            QMessageBox.critical(self, "Критическая ошибка", str(e))
+            QMessageBox.critical(self, "Ошибка", str(e))
 
     def update_progress_bar(self, percent):
         self.profit_bar.setValue(int(percent))
@@ -215,8 +226,6 @@ class ChangePriceDialog(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("Изменить цену товара")
-        self.setModal(True)
-
         layout = QFormLayout(self)
         self.new_price_input = QLineEdit(self)
         layout.addRow("Новая цена (₽):", self.new_price_input)

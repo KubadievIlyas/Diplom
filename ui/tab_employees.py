@@ -20,7 +20,7 @@ def to_qtime(value):
     elif isinstance(value, timedelta):
         total_seconds = int(value.total_seconds())
         hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) % 60
+        minutes = (total_seconds % 3600) // 60
         seconds = total_seconds % 60
         return QTime(hours, minutes, seconds)
     elif isinstance(value, time):
@@ -29,27 +29,84 @@ def to_qtime(value):
         return QTime()
 
 
+
 class AddEmployeeDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, db=None):
         super().__init__(parent)
         self.setWindowTitle("Добавить сотрудника")
+        self.db = db
 
         self.first_name_edit = QLineEdit()
         self.last_name_edit = QLineEdit()
+        self.position_combo = QComboBox()
+        self.birth_date_edit = QCalendarWidget()
+        self.status_edit = QLineEdit()
+        self.login_edit = QLineEdit()
+        self.password_edit = QLineEdit()
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.photo_path = None  # Можно добавить загрузку фото отдельно
 
         layout = QFormLayout()
         layout.addRow("Имя:", self.first_name_edit)
         layout.addRow("Фамилия:", self.last_name_edit)
 
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.buttons.accepted.connect(self.accept)
+        # Загрузка позиций из БД
+        self.load_positions()
+        layout.addRow("Должность:", self.position_combo)
+
+        layout.addRow("Дата рождения:", self.birth_date_edit)
+        layout.addRow("Статус:", self.status_edit)
+        layout.addRow("Логин:", self.login_edit)
+        layout.addRow("Пароль:", self.password_edit)
+
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.accepted.connect(self.validate_and_accept)
         self.buttons.rejected.connect(self.reject)
+
         layout.addRow(self.buttons)
         self.setLayout(layout)
 
-    def get_data(self):
-        return self.first_name_edit.text(), self.last_name_edit.text()
+    def load_positions(self):
+        self.position_combo.clear()
+        positions = self.db.fetch_all("SELECT id, name FROM positions")
+        for pos in positions:
+            self.position_combo.addItem(pos['name'], pos['id'])
 
+    def validate_and_accept(self):
+        # Простая валидация
+        if not self.first_name_edit.text().strip():
+            QMessageBox.warning(self, "Ошибка", "Введите имя")
+            return
+        if not self.last_name_edit.text().strip():
+            QMessageBox.warning(self, "Ошибка", "Введите фамилию")
+            return
+        if not self.login_edit.text().strip():
+            QMessageBox.warning(self, "Ошибка", "Введите логин")
+            return
+        if not self.password_edit.text():
+            QMessageBox.warning(self, "Ошибка", "Введите пароль")
+            return
+        # Проверим уникальность логина
+        existing = self.db.fetch_one("SELECT id FROM employees WHERE login = %s", (self.login_edit.text().strip(),))
+        if existing:
+            QMessageBox.warning(self, "Ошибка", "Такой логин уже существует")
+            return
+
+        self.accept()
+
+    def get_data(self):
+        return {
+            'first_name': self.first_name_edit.text().strip(),
+            'last_name': self.last_name_edit.text().strip(),
+            'position_id': self.position_combo.currentData(),
+            'birth_date': self.birth_date_edit.selectedDate().toString("yyyy-MM-dd"),
+            'status': self.status_edit.text().strip(),
+            'login': self.login_edit.text().strip(),
+            'password': self.password_edit.text(),  # рекомендую хешировать пароль перед сохранением
+            'photo_path': self.photo_path
+        }
 
 class EditShiftDialog(QDialog):
     def __init__(self, parent=None, shift_data=None, employees=None):
@@ -222,7 +279,7 @@ class SummaryDialog(QDialog):
             system = platform.system()
             if system == "Windows":
                 os.startfile(temp_path)
-            elif system == "Darwin":  # macO
+            elif system == "Darwin":  # macOS
                 subprocess.call(["open", temp_path])
             elif system == "Linux":
                 subprocess.call(["xdg-open", temp_path])
@@ -387,26 +444,36 @@ class EmployeeTab(QWidget):
     def open_manage_shifts(self):
         try:
             from ui.manage_shifts_dialog import ManageShiftsDialog
-            dialog = ManageShiftsDialog(self, db=self.db, employees=self.employees_data)
-            if dialog.exec():
-                self.load_shifts()
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть управление сменами:\n{e}")
+            dialog = ManageShiftsDialog(self, self.db, self.employees_data)
+            dialog.exec()
+            self.load_shifts()
+        except ImportError:
+            QMessageBox.warning(self, "Ошибка", "Диалог управления сменами не найден.")
 
     def open_summary(self):
-        dialog = SummaryDialog(self, db=self.db, employees=self.employees_data)
+        dialog = SummaryDialog(self, self.db, self.employees_data)
         dialog.exec()
 
     def add_employee(self):
-        dialog = AddEmployeeDialog(self)
+        dialog = AddEmployeeDialog(self, self.db)
         if dialog.exec():
-            first_name, last_name = dialog.get_data()
-            if not first_name or not last_name:
-                QMessageBox.warning(self, "Ошибка", "Имя и фамилия обязательны.")
-                return
-            self.db.execute("""
-                INSERT INTO employees (first_name, last_name)
-                VALUES (%s, %s)
-            """, (first_name, last_name))
-            QMessageBox.information(self, "Добавлено", "Сотрудник успешно добавлен.")
-            self.load_employees()
+            data = dialog.get_data()
+            try:
+                self.db.execute("""
+                       INSERT INTO employees
+                       (first_name, last_name, position_id, birth_date, status, login, password, photo_path)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                   """, (
+                    data['first_name'],
+                    data['last_name'],
+                    data['position_id'],
+                    data['birth_date'],
+                    data['status'],
+                    data['login'],
+                    data['password'],  # Здесь надо в реальном приложении захешировать
+                    data['photo_path']  # можно отправлять None, если нет фото
+                ))
+                QMessageBox.information(self, "Успех", "Сотрудник успешно добавлен")
+                # Обнови список сотрудников, если он есть
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось добавить сотрудника:\n{e}")

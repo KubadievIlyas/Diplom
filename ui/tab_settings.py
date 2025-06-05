@@ -1,168 +1,251 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, QMessageBox, QLabel, QFileDialog
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
-from database.db import Database
-from decimal import Decimal
-import pandas as pd
 import os
-import subprocess
+import pymysql
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QMessageBox, QDateEdit, QFileDialog, QFormLayout
+)
+from PyQt6.QtCore import QDate, Qt, QBuffer, QIODevice, QByteArray
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QPainterPath
 
-
-class SettingsTab(QWidget):
+# === Класс Database ===
+class Database:
     def __init__(self):
+        try:
+            self.conn = pymysql.connect(
+                host="localhost",
+                port=3306,
+                user="root",
+                password="",
+                database="coffee_shop",
+                charset='utf8mb4',
+                cursorclass=pymysql.cursors.DictCursor
+            )
+            self.cursor = self.conn.cursor()
+            print("[DB] Подключение успешно.")
+        except Exception as e:
+            print(f"[DB] Ошибка подключения: {e}")
+            self.conn = None
+
+    def is_connected(self):
+        return self.conn is not None
+
+    def fetch_one(self, query, params=()):
+        self.cursor.execute(query, params)
+        return self.cursor.fetchone()
+
+    def execute(self, query, params=()):
+        self.cursor.execute(query, params)
+        self.conn.commit()
+
+    def close(self):
+        if self.conn:
+            self.cursor.close()
+            self.conn.close()
+
+# === Вспомогательная функция ===
+def rounded_pixmap(pixmap, size=180):
+    scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                           Qt.TransformationMode.SmoothTransformation)
+    result = QPixmap(size, size)
+    result.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(result)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+    path = QPainterPath()
+    path.addEllipse(0, 0, size, size)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, scaled)
+    painter.end()
+    return result
+
+# === Основной класс ===
+class SettingsTab(QWidget):
+    def __init__(self, user_id=None):
         super().__init__()
+        self.user_id = user_id
+        self.avatar_pixmap = None
+
         self.db = Database()
+        if not self.db.is_connected():
+            QMessageBox.critical(self, "Ошибка", "Не удалось подключиться к базе данных.")
+            return
+
         self.init_ui()
 
+        if self.user_id:
+            self.load_user_data()
+            self.adjust_size_and_layout()
+
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        self.setMinimumSize(700, 400)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
 
-        # Заголовок
-        layout.addWidget(QLabel("<h2>Настройки фиксированных данных</h2>"))
+        self.avatar_label = QLabel()
+        self.avatar_label.setFixedSize(180, 180)
+        self.avatar_label.setStyleSheet("""
+            QLabel {
+                border-radius: 90px; 
+                background-color: #ddd; 
+                border: 2px solid #bbb;
+            }
+        """)
+        self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.avatar_label.setText("Нет фото")
 
-        # Форма для ввода данных
-        self.form_layout = QFormLayout()
+        self.btn_upload_avatar = QPushButton("Загрузить фото")
+        self.btn_upload_avatar.setFixedWidth(180)
+        self.btn_upload_avatar.clicked.connect(self.upload_avatar)
 
-        # Поля для ввода данных (банковская комиссия и налог в процентах)
-        self.bank_fee_input = QLineEdit()
-        self.nalog_input = QLineEdit()
+        avatar_layout = QVBoxLayout()
+        avatar_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar_layout.setSpacing(10)
+        avatar_layout.addWidget(self.avatar_label)
+        avatar_layout.addWidget(self.btn_upload_avatar)
 
-        self.form_layout.addRow("Банковская комиссия (%)", self.bank_fee_input)
-        self.form_layout.addRow("Налог (%)", self.nalog_input)
+        form_layout = QFormLayout()
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form_layout.setFormAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Кнопка для сохранения
-        save_btn = QPushButton("Сохранить изменения")
-        save_btn.clicked.connect(self.save_settings)
+        self.first_name_input = QLineEdit()
+        self.last_name_input = QLineEdit()
 
-        # Кнопка для экспорта данных о продукции
-        export_products_btn = QPushButton("Экспортировать продукцию в Excel")
-        export_products_btn.clicked.connect(self.export_products_to_excel)
+        self.birth_date_input = QDateEdit()
+        self.birth_date_input.setCalendarPopup(True)
+        self.birth_date_input.setDisplayFormat("yyyy-MM-dd")
+        self.birth_date_input.setDate(QDate.currentDate())
 
-        # Кнопка для экспорта данных о сменах
-        export_shifts_btn = QPushButton("Экспортировать смены в Excel")
-        export_shifts_btn.clicked.connect(self.export_shifts_to_excel)
+        self.status_input = QLineEdit()
+        self.login_display = QLabel()
+        self.login_display.setStyleSheet("font-weight: bold; color: #555;")
 
-        layout.addLayout(self.form_layout)
-        layout.addWidget(save_btn)
-        layout.addWidget(export_products_btn)
-        layout.addWidget(export_shifts_btn)
+        form_layout.addRow("Имя:", self.first_name_input)
+        form_layout.addRow("Фамилия:", self.last_name_input)
+        form_layout.addRow("Дата рождения:", self.birth_date_input)
+        form_layout.addRow("Статус:", self.status_input)
+        form_layout.addRow("Логин:", self.login_display)
 
-        # Загружаем текущие данные
-        self.load_settings()
+        self.save_btn = QPushButton("Сохранить изменения")
+        self.save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                padding: 10px 20px;
+                font-size: 16px;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        self.save_btn.clicked.connect(self.save_user_data)
 
-    def load_settings(self):
-        # Загружаем текущие фиксированные расходы из базы данных
-        settings = self.db.fetch_one("SELECT * FROM fixed_costs WHERE id = 1")
+        self.change_pass_btn = QPushButton("Сменить пароль")
+        self.change_pass_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                padding: 10px 20px;
+                font-size: 16px;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
 
-        if settings:
-            # Устанавливаем значения в поля для ввода
-            self.bank_fee_input.setText(str(settings['bank_fee'] * 100))  # Отображаем в процентах
-            self.nalog_input.setText(str(settings['nalog'] * 100))  # Отображаем в процентах
-        else:
-            QMessageBox.warning(self, "Ошибка", "Не удалось загрузить настройки.")
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.save_btn)
+        btn_layout.addWidget(self.change_pass_btn)
 
-    def save_settings(self):
+        main_layout = QHBoxLayout()
+        main_layout.addLayout(avatar_layout, 1)
+        main_layout.addLayout(form_layout, 2)
+
+        layout.addLayout(main_layout)
+        layout.addLayout(btn_layout)
+        self.setLayout(layout)
+
+    def adjust_size_and_layout(self):
+        self.adjustSize()
+        self.setMinimumSize(self.size())
+
+    def load_user_data(self):
         try:
-            # Получаем данные из полей ввода и преобразуем в проценты
-            bank_fee_percent = Decimal(self.bank_fee_input.text().replace(',', '.')) / 100
-            nalog_percent = Decimal(self.nalog_input.text().replace(',', '.')) / 100
-
-            # Проверяем на корректность
-            if bank_fee_percent < 0 or nalog_percent < 0:
-                QMessageBox.warning(self, "Ошибка", "Значения не могут быть отрицательными.")
+            user = self.db.fetch_one("SELECT * FROM employees WHERE id = %s", (self.user_id,))
+            if not user:
+                QMessageBox.warning(self, "Ошибка", "Пользователь не найден.")
                 return
 
-            # Сохраняем данные в базу
-            self.db.execute(
-                "UPDATE fixed_costs SET bank_fee = %s, nalog = %s WHERE id = 1",
-                (bank_fee_percent, nalog_percent)
-            )
+            self.first_name_input.setText(user.get('first_name', ''))
+            self.last_name_input.setText(user.get('last_name', ''))
+            self.status_input.setText(user.get('status', ''))
+            self.login_display.setText(user.get('login', ''))
 
-            QMessageBox.information(self, "Успех", "Настройки успешно обновлены.")
-        except ValueError:
-            QMessageBox.warning(self, "Ошибка", "Пожалуйста, введите корректные значения.")
+            birth_date = user.get('birth_date')
+            if birth_date:
+                qdate = QDate.fromString(str(birth_date), "yyyy-MM-dd")
+                if qdate.isValid():
+                    self.birth_date_input.setDate(qdate)
 
-    def export_products_to_excel(self):
-        try:
-            # Экспортируем данные о продукции
-            query = """
-                SELECT p.name AS product_name,
-                       c.name AS category_name,
-                       p.price,
-                       u.name AS unit_name,
-                       p.weight_or_volume
-                FROM products p
-                JOIN categories c ON p.category_id = c.id
-                JOIN units u ON p.unit_id = u.id
-            """
-            products = self.db.fetch_all(query)
-
-            if not products:
-                QMessageBox.warning(self, "Ошибка", "Нет данных о продукции для экспорта.")
-                return
-
-            # Создаем DataFrame из полученных данных
-            df = pd.DataFrame(products)
-
-            # Заменим заголовки столбцов на русские
-            df.columns = ['Название продукции', 'Категория', 'Цена', 'Единица измерения', 'Вес/Объем']
-
-            # Открываем диалог для выбора местоположения и имени файла
-            file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить файл", "", "Excel Files (*.xlsx)")
-
-            if file_path:
-                # Сохраняем DataFrame в файл Excel
-                df.to_excel(file_path, index=False, engine='openpyxl')
-                QMessageBox.information(self, "Успех", "Данные о продукции успешно экспортированы в Excel.")
-
-                # Открываем файл после экспорта
-                self.open_file(file_path)
+            photo_data = user.get('photo_path')
+            if photo_data:
+                image = QImage()
+                image.loadFromData(photo_data)
+                if not image.isNull():
+                    pixmap = QPixmap.fromImage(image)
+                    self.avatar_pixmap = pixmap
+                    self.set_avatar(pixmap)
 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при экспорте данных: {str(e)}")
+            QMessageBox.critical(self, "Ошибка", f"Ошибка загрузки данных:\n{e}")
 
-    def export_shifts_to_excel(self):
+    def save_user_data(self):
+        first_name = self.first_name_input.text().strip()
+        last_name = self.last_name_input.text().strip()
+        birth_date = self.birth_date_input.date().toString("yyyy-MM-dd")
+        status = self.status_input.text().strip()
+
+        if not first_name or not last_name:
+            QMessageBox.warning(self, "Ошибка", "Имя и фамилия обязательны.")
+            return
+
         try:
-            query = """
-                SELECT e.first_name,
-                       e.last_name,
-                       e.position,
-                       s.shift_date,
-                       TIME_FORMAT(s.shift_start, '%%H:%%i') AS shift_start,
-                       TIME_FORMAT(s.shift_end, '%%H:%%i') AS shift_end,
-                       s.shift_salary
-                FROM shifts s
-                JOIN employees e ON s.employee_id = e.id
-                ORDER BY s.shift_date DESC
-            """
+            photo_data = None
+            if self.avatar_pixmap and not self.avatar_pixmap.isNull():
+                image = self.avatar_pixmap.toImage()
+                byte_array = QByteArray()
+                buffer = QBuffer(byte_array)
+                buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+                image.save(buffer, "PNG")
+                photo_data = byte_array.data()
 
-            shifts = self.db.fetch_all(query)
+            self.db.execute("""
+                UPDATE employees 
+                SET first_name = %s, last_name = %s, birth_date = %s, status = %s, photo_path = %s 
+                WHERE id = %s
+            """, (first_name, last_name, birth_date, status, photo_data, self.user_id))
 
-            if not shifts:
-                QMessageBox.warning(self, "Ошибка", "Нет данных о сменах для экспорта.")
-                return
-
-            df = pd.DataFrame(shifts)
-
-            df.columns = ['Имя', 'Фамилия', 'Должность', 'Дата смены', 'Начало смены', 'Конец смены',
-                          'Зарплата за смену']
-
-            file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить файл", "", "Excel Files (*.xlsx)")
-
-            if file_path:
-                df.to_excel(file_path, index=False, engine='openpyxl')
-                QMessageBox.information(self, "Успех", "Данные о сменах успешно экспортированы в Excel.")
-                self.open_file(file_path)
-
+            QMessageBox.information(self, "Готово", "Изменения сохранены.")
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при экспорте смен: {str(e)}")
+            QMessageBox.critical(self, "Ошибка", f"Ошибка сохранения:\n{e}")
 
-    def open_file(self, file_path):
-        try:
-            # Открыть файл с помощью системного приложения
-            if os.name == 'nt':  # Для Windows
-                os.startfile(file_path)
-            elif os.name == 'posix':  # Для macOS и Linux
-                subprocess.run(['open', file_path] if sys.platform == 'darwin' else ['xdg-open', file_path])
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть файл: {str(e)}")
+    def upload_avatar(self):
+        fname, _ = QFileDialog.getOpenFileName(
+            self, "Выберите фото", "", "Изображения (*.png *.jpg *.jpeg *.bmp)"
+        )
+        if not fname:
+            return
+
+        pixmap = QPixmap(fname)
+        if pixmap.isNull():
+            QMessageBox.warning(self, "Ошибка", "Не удалось загрузить изображение.")
+            return
+
+        self.avatar_pixmap = pixmap
+        self.set_avatar(pixmap)
+
+    def set_avatar(self, pixmap):
+        rounded = rounded_pixmap(pixmap, 180)
+        self.avatar_label.setPixmap(rounded)
+

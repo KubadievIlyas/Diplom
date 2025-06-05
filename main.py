@@ -1,82 +1,75 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QTabWidget, QSplashScreen, QLabel, QProgressBar, QVBoxLayout, \
-    QWidget
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtWidgets import QApplication, QMainWindow, QTabWidget, QDialog, QLabel, QProgressBar, QVBoxLayout, QWidget
+from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, QTimer
+
+from auth import AuthDialog
 
 from ui.tab_products import ProductTab
 from ui.tab_calculator import CalculatorTab
 from ui.tab_employees import EmployeeTab
 from ui.tab_settings import SettingsTab
-from PIL import Image
-import os
+
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, user_id):
         super().__init__()
         self.setWindowTitle("Coffee Shop Manager")
         self.resize(1500, 800)
         self.setWindowIcon(QIcon("assets/icon.png"))
 
-        # Вкладки
         tabs = QTabWidget()
         tabs.addTab(ProductTab(), "📦 Продукты")
         tabs.addTab(CalculatorTab(), "💰 Калькулятор")
         tabs.addTab(EmployeeTab(), "👨‍💼 Сотрудники")
-        tabs.addTab(SettingsTab(), "⚙️ Настройки")
+        tabs.addTab(SettingsTab(user_id=user_id), "⚙️ Настройки")  # <-- передаём user_id
         self.setCentralWidget(tabs)
+
 
 
 class SplashScreen(QWidget):
     def __init__(self):
         super().__init__()
-
-        # Настроим размеры окна загрузки
         self.setWindowTitle("Загрузка")
         self.setFixedSize(400, 150)
 
-        # Создаем вертикальный layout
         layout = QVBoxLayout(self)
 
-        # Заголовок
         self.title_label = QLabel("Загрузка приложения...", self)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.title_label)
 
-        # Прогресс-бар
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         layout.addWidget(self.progress_bar)
 
-        # Устанавливаем layout для окна
         self.setLayout(layout)
 
     def update_progress(self, value):
-        """Обновляет значение прогресса на баре"""
         self.progress_bar.setValue(value)
-        if value == 100:
-            self.close()  # Закрыть экран загрузки, когда прогресс завершен.
 
 
 def main():
     app = QApplication(sys.argv)
 
-    # Загружаем изображение для экрана загрузки
-    splash = SplashScreen()
-    splash.show()
-
-    # Подключение стилей
     try:
         with open("assets/style.css", "r", encoding="utf-8") as f:
             app.setStyleSheet(f.read())
     except FileNotFoundError:
         print("⚠️ Файл стилей не найден: assets/style.css")
 
-    # Инициализация основного окна
-    window = MainWindow()
+    auth_dialog = AuthDialog()
+    if auth_dialog.exec() != QDialog.DialogCode.Accepted:
+        sys.exit(0)
 
-    # Таймер для обновления прогресса
+    user_id = auth_dialog.user_id  # <-- получаем id авторизованного пользователя
+
+    splash = SplashScreen()
+    splash.show()
+
+    window = MainWindow(user_id=user_id)  # <-- передаём в MainWindow
+
     progress = 0
 
     def update_splash():
@@ -84,15 +77,14 @@ def main():
         progress += 5
         splash.update_progress(progress)
         if progress >= 100:
-            window.show()  # Показываем основное окно
+            splash.close()
+            window.show()
         else:
-            QTimer.singleShot(100, update_splash)  # Через 100 мс обновляем прогресс
+            QTimer.singleShot(100, update_splash)
 
-    # Запускаем обновление прогресса
     QTimer.singleShot(100, update_splash)
 
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()
